@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+
+# Private inventories and local grouping configuration
+/survey.json
+/index.html
+/review.json
+/domains.json
+/demo.html
+
+# Credentials and local tooling
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.idea/
+.vscode/
+.coverage
+htmlcov/

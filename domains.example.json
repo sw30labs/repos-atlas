@@ -1,0 +1,5 @@
+{
+  "Apps & Services": ["garden-api", "weather-board", "recipe-box", "trail-log"],
+  "Data & Research": ["river-data", "bird-count", "climate-notes", "map-sketch"],
+  "Meta & Tooling": ["tiny-backup", "markdown-check", "color-lab", "weekend-notes"]
+}

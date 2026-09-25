@@ -1,0 +1,390 @@
+{
+  "generated": "2026-09-25T12:00:00",
+  "root": "/example/projects",
+  "repos": [
+    {
+      "name": "garden-api",
+      "is_git": true,
+      "files": 30,
+      "bytes": 855400,
+      "langs": {
+        "Python": 20
+      },
+      "loc": {
+        "Python": 18200,
+        "Markdown": 2275
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A small API for tracking garden plots.",
+      "commits": 180,
+      "branch": "main",
+      "origin": "https://example.com/demo/garden-api.git",
+      "last": "2026-09-24T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 36,
+        "2026-03": 45,
+        "2026-09": 99
+      },
+      "recent30": 45,
+      "tags": 1
+    },
+    {
+      "name": "weather-board",
+      "is_git": true,
+      "files": 47,
+      "bytes": 596900,
+      "langs": {
+        "TypeScript": 21
+      },
+      "loc": {
+        "TypeScript": 12700,
+        "Markdown": 1587
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A dashboard for local weather observations.",
+      "commits": 128,
+      "branch": "main",
+      "origin": "https://example.com/demo/weather-board.git",
+      "last": "2026-09-20T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 2,
+      "months": {
+        "2026-01": 25,
+        "2026-03": 32,
+        "2026-09": 71
+      },
+      "recent30": 32,
+      "tags": 1
+    },
+    {
+      "name": "recipe-box",
+      "is_git": true,
+      "files": 64,
+      "bytes": 418300,
+      "langs": {
+        "Python": 22
+      },
+      "loc": {
+        "Python": 8900,
+        "Markdown": 1112
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A searchable collection of fictional recipes.",
+      "commits": 94,
+      "branch": "main",
+      "origin": "https://example.com/demo/recipe-box.git",
+      "last": "2026-08-30T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 18,
+        "2026-03": 23,
+        "2026-08": 53
+      },
+      "recent30": 0,
+      "tags": 1
+    },
+    {
+      "name": "trail-log",
+      "is_git": true,
+      "files": 81,
+      "bytes": 296100,
+      "langs": {
+        "Swift": 23
+      },
+      "loc": {
+        "Swift": 6300,
+        "Markdown": 787
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A notebook for hikes and trail conditions.",
+      "commits": 63,
+      "branch": "main",
+      "origin": "https://example.com/demo/trail-log.git",
+      "last": "2026-07-10T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 12,
+        "2026-03": 15,
+        "2026-07": 36
+      },
+      "recent30": 0,
+      "tags": 1
+    },
+    {
+      "name": "river-data",
+      "is_git": true,
+      "files": 98,
+      "bytes": 1038700,
+      "langs": {
+        "Python": 24
+      },
+      "loc": {
+        "Python": 22100,
+        "Markdown": 2762
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "Tools for exploring synthetic river measurements.",
+      "commits": 201,
+      "branch": "main",
+      "origin": "https://example.com/demo/river-data.git",
+      "last": "2026-09-22T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 40,
+        "2026-03": 50,
+        "2026-09": 111
+      },
+      "recent30": 50,
+      "tags": 1
+    },
+    {
+      "name": "bird-count",
+      "is_git": true,
+      "files": 115,
+      "bytes": 253800,
+      "langs": {
+        "R": 25
+      },
+      "loc": {
+        "R": 5400,
+        "Markdown": 675
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "Charts for a fictional bird survey.",
+      "commits": 56,
+      "branch": "main",
+      "origin": "https://example.com/demo/bird-count.git",
+      "last": "2026-09-12T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 1,
+      "months": {
+        "2026-01": 11,
+        "2026-03": 14,
+        "2026-09": 31
+      },
+      "recent30": 14,
+      "tags": 1
+    },
+    {
+      "name": "climate-notes",
+      "is_git": true,
+      "files": 132,
+      "bytes": 108100,
+      "langs": {
+        "Markdown": 26
+      },
+      "loc": {
+        "Markdown": 2300
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "Notes on reproducible data analysis.",
+      "commits": 26,
+      "branch": "main",
+      "origin": "https://example.com/demo/climate-notes.git",
+      "last": "2026-06-01T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 5,
+        "2026-03": 6,
+        "2026-06": 15
+      },
+      "recent30": 0,
+      "tags": 1
+    },
+    {
+      "name": "map-sketch",
+      "is_git": false,
+      "files": 149,
+      "bytes": 84600,
+      "langs": {
+        "JavaScript": 27
+      },
+      "loc": {
+        "JavaScript": 1800,
+        "Markdown": 225
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "An unfinished sketch of an interactive map."
+    },
+    {
+      "name": "tiny-backup",
+      "is_git": true,
+      "files": 166,
+      "bytes": 338400,
+      "langs": {
+        "Go": 28
+      },
+      "loc": {
+        "Go": 7200,
+        "Markdown": 900
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A command-line backup experiment.",
+      "commits": 82,
+      "branch": "main",
+      "origin": "https://example.com/demo/tiny-backup.git",
+      "last": "2026-09-25T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 16,
+        "2026-03": 20,
+        "2026-09": 46
+      },
+      "recent30": 20,
+      "tags": 1
+    },
+    {
+      "name": "markdown-check",
+      "is_git": true,
+      "files": 183,
+      "bytes": 145700,
+      "langs": {
+        "Python": 29
+      },
+      "loc": {
+        "Python": 3100,
+        "Markdown": 387
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A checker for links in Markdown documents.",
+      "commits": 38,
+      "branch": "main",
+      "origin": "https://example.com/demo/markdown-check.git",
+      "last": "2026-08-20T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 7,
+        "2026-03": 9,
+        "2026-08": 22
+      },
+      "recent30": 0,
+      "tags": 1
+    },
+    {
+      "name": "color-lab",
+      "is_git": true,
+      "files": 200,
+      "bytes": 197400,
+      "langs": {
+        "TypeScript": 30
+      },
+      "loc": {
+        "TypeScript": 4200,
+        "Markdown": 525
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "Experiments with accessible color palettes.",
+      "commits": 42,
+      "branch": "main",
+      "origin": "",
+      "last": "2026-04-10T12:00:00+00:00",
+      "born": "2026-01-05T12:00:00+00:00",
+      "last_subject": "Improve the sample project",
+      "authors": [
+        "Demo Contributor"
+      ],
+      "dirty": 0,
+      "months": {
+        "2026-01": 8,
+        "2026-03": 10,
+        "2026-04": 24
+      },
+      "recent30": 0,
+      "tags": 1
+    },
+    {
+      "name": "weekend-notes",
+      "is_git": false,
+      "files": 217,
+      "bytes": 33840,
+      "langs": {
+        "Markdown": 31
+      },
+      "loc": {
+        "Markdown": 720
+      },
+      "markers": [
+        "tests",
+        "license"
+      ],
+      "blurb": "A folder of fictional project ideas."
+    }
+  ]
+}
