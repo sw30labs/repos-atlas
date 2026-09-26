@@ -36,6 +36,7 @@ python3 atlas.py --demo
 Open `demo.html` in your browser. This uses only the included fictional fixture;
 it does not scan your folders or read a local model's output. On macOS, run
 `open demo.html`; on Linux, `xdg-open demo.html`; on Windows, `start demo.html`.
+On a POSIX machine, `./setup_and_run.sh --demo` renders that page and opens it.
 
 ## Map your projects
 
@@ -47,6 +48,11 @@ python3 atlas.py
 Open `index.html` in your browser. Each immediate child directory is treated as a
 project, whether or not it uses Git. With no `--root`, the survey uses `ATLAS_ROOT`
 or the parent folder of these scripts, and skips repos-atlas itself.
+
+On a POSIX machine, `./setup_and_run.sh --root /path/to/projects` checks Python
+3.10+ and Git, runs the unit tests, surveys, renders, and opens the page.
+`./setup_and_run.sh --help` lists `--setup-only`, `--no-tests`, `--no-browser`,
+`--quiet`, and `--review`. Arguments after `--` are passed to `review.py`.
 
 ```bash
 python3 survey.py --root ~/work --quiet

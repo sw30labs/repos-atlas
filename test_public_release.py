@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -202,6 +203,36 @@ class TestSurveyIntegration(unittest.TestCase):
             self.assertIn('sample', page)
             self.assertIn('1 uncommitted', page)
             self.assertNotIn('fake-password', page)
+
+
+class TestSetupScript(unittest.TestCase):
+    def _run(self, *args):
+        bash = shutil.which('bash')
+        if not bash:
+            self.skipTest('bash is not on PATH')
+        script = Path(__file__).resolve().parent / 'setup_and_run.sh'
+        return subprocess.run([bash, str(script), *args], capture_output=True, text=True)
+
+    def test_help_lists_the_entry_points(self):
+        result = self._run('--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for flag in ('--demo', '--root', '--review', '--setup-only'):
+            self.assertIn(flag, result.stdout)
+
+    def test_unknown_option_exits_before_any_scan(self):
+        result = self._run('--not-a-flag')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('unknown option', result.stderr)
+
+    def test_demo_rejects_a_survey_root(self):
+        result = self._run('--demo', '--root', '/tmp')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--root', result.stderr)
+
+    def test_setup_only_stops_before_the_survey(self):
+        result = self._run('--setup-only', '--no-tests', '--quiet')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('survey.json', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':
