@@ -119,6 +119,30 @@ class TestReadmeBlurb(unittest.TestCase):
             self.assertEqual(survey.readme_blurb(td), "")
 
 
+class TestFindProjects(unittest.TestCase):
+    def test_containers_searched_repos_not(self):
+        with tempfile.TemporaryDirectory() as td:
+            for d in ("solo/.git", "group/a/.git", "group/deep/b/.git",
+                      "group/a/inner/.git", "group/node_modules/x/.git",
+                      "loose/src", ".hidden/c/.git"):
+                os.makedirs(os.path.join(td, d))
+            with open(os.path.join(td, "group", "c"), "w"):
+                pass
+            os.makedirs(os.path.join(td, "group", "c2"))
+            with open(os.path.join(td, "group", "c2", ".git"), "w") as f:
+                f.write("gitdir: elsewhere")  # worktree / submodule
+            self.assertEqual(survey.find_projects(td),
+                             ["group/a", "group/c2", "group/deep/b", "loose", "solo"])
+
+    def test_review_accepts_nested_names(self):
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, "group", "a"))
+            self.assertIn("name: group/a", review.evidence({"name": "group/a"}, root=td))
+            for bad in ("group/../..", "group//a", "/group/a"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    review.evidence({"name": bad}, root=td)
+
+
 class TestRunNoOptionalLocks(unittest.TestCase):
     def test_git_gets_no_optional_locks(self):
         with mock.patch.object(survey.subprocess, "run") as run:

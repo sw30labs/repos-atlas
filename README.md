@@ -45,8 +45,10 @@ python3 survey.py --root /path/to/projects
 python3 atlas.py
 ```
 
-Open `index.html` in your browser. Each immediate child directory is treated as a
-project, whether or not it uses Git. With no `--root`, the survey uses `ATLAS_ROOT`
+Open `index.html` in your browser. Every Git repo under the root is a project, at
+any depth, so a folder that groups repos (`clients/acme-api`) is searched through
+and its repos are listed by relative path. A top-level folder with no repo inside
+is still a project of its own. With no `--root`, the survey uses `ATLAS_ROOT`
 or the parent folder of these scripts, and skips repos-atlas itself.
 
 On a POSIX machine, `./setup_and_run.sh --root /path/to/projects` checks Python
@@ -139,9 +141,9 @@ do not fetch, push, stage, commit, or intentionally write inside inspected repos
 - Counts are approximate, based on extensions and newlines, not a code parser.
 - The scan does not honor `.gitignore`. Dot-directories other than `.github` are
   skipped; the named dependency/build exclusions are in `survey.py`.
-- Only immediate child folders are projects. Nested repositories and submodules
-  are not separately indexed; Git worktrees with a `.git` file are treated as
-  ordinary folders. Only the `origin` remote is recorded.
+- The search stops at the first repo on each path: repos nested inside another
+  repo, and submodules, count toward their parent. Git worktrees and submodules
+  with a `.git` file are recognized as repos. Only the `origin` remote is recorded.
 - Existing shallow history limits commit totals and age. Git commands that time
   out or fail produce empty metadata; large histories can therefore be incomplete.
 - A configured remote is not proof of a backup or a public repository.

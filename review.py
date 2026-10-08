@@ -205,8 +205,9 @@ def evidence(rec, root=None):
     tiny one cost about the same."""
     root = os.path.realpath(os.path.expanduser(root or ROOT))
     name = rec["name"]
-    if not name or name in (".", "..") or os.path.basename(name) != name:
-        raise ValueError("survey project names must be immediate child directories")
+    if (not name or os.path.isabs(name) or "\\" in name
+            or any(part in ("", ".", "..") for part in name.split("/"))):
+        raise ValueError("survey project names must be relative paths inside the root")
     path = os.path.realpath(os.path.join(root, name))
     if os.path.commonpath([root, path]) != root:
         raise ValueError("project resolves outside the surveyed folder")

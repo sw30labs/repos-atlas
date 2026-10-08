@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Walk every project under the parent directory and record what it is.
 
+A project is a git repo at any depth (folders of repos are searched through), or a
+top-level folder that holds no repo at all. Names are paths relative to the root.
+
 Writes survey.json beside this file. Read-only: uses --no-optional-locks so it can
 never leave a stale .git/index.lock in a repo it inspected.
 
@@ -125,13 +128,37 @@ def walk(path):
                 except OSError: pass
     return exts, loc, nfiles, nbytes, markers
 
+def is_repo(path):
+    # .git is a file, not a directory, in worktrees and submodules.
+    return os.path.exists(os.path.join(path, ".git"))
+
+def find_projects(ROOT):
+    """Every git repo under ROOT, at any depth, as paths relative to ROOT. A folder
+    of repos is a container, not a project. A top-level folder with no repo in it
+    is still a project of its own, so loose non-git work keeps showing up."""
+    found = []
+    for name in sorted(os.listdir(ROOT)):
+        top = os.path.join(ROOT, name)
+        if not os.path.isdir(top) or name.startswith("."): continue
+        if os.path.realpath(top) == os.path.realpath(HERE): continue  # don't survey ourselves
+        if is_repo(top):
+            found.append(name); continue
+        nested = []
+        for dirpath, dirnames, _ in os.walk(top):
+            dirnames[:] = sorted(prune(dirpath, dirnames))
+            if os.path.realpath(dirpath) == os.path.realpath(HERE):
+                dirnames[:] = []; continue
+            if dirpath != top and is_repo(dirpath):
+                nested.append(os.path.relpath(dirpath, ROOT))
+                dirnames[:] = []  # a repo's own nested repos belong to it
+        found.extend(nested or [name])
+    return found
+
 def survey(ROOT, quiet=False):
     repos = []
-    for name in sorted(os.listdir(ROOT)):
+    for name in find_projects(ROOT):
         path = os.path.join(ROOT, name)
-        if not os.path.isdir(path) or name.startswith("."): continue
-        if os.path.realpath(path) == os.path.realpath(HERE): continue  # don't survey ourselves
-        isgit = os.path.isdir(os.path.join(path, ".git"))
+        isgit = is_repo(path)
         exts, loc, nfiles, nbytes, markers = walk(path)
         r = {"name": name, "is_git": isgit, "files": nfiles, "bytes": nbytes,
              "langs": dict(exts.most_common(8)), "loc": dict(loc.most_common(8)),
