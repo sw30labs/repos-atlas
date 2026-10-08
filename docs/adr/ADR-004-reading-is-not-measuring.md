@@ -1,6 +1,6 @@
 # ADR-004: A model may read the code; it may never be quoted as measurement
 
-- **Status:** Accepted
+- **Status:** Accepted; the "Local only" rule is superseded by [ADR-007](ADR-007-openai-endpoint.md)
 - **Date:** 2026-09-12
 - **Deciders:** Nicolas Cravino
 - **Scope:** everything `review.py` produces

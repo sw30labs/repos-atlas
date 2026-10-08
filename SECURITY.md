@@ -5,11 +5,15 @@
 - `survey.py` reads local files and Git metadata. It does not fetch or push.
 - `atlas.py` writes a self-contained HTML file with no external assets or requests.
 - `review.py` sends a bounded README excerpt, project name, language counts,
-  markers, recent commit subjects, and a short file tree to the local model
-  server you select. It accepts only loopback HTTP(S) endpoints, bypasses system
-  proxies, and refuses redirects. There is no cloud fallback or API-key support.
-- A model server may log or forward its requests. Use a server you trust and
-  configure that server to keep data local. Repository and model text are
+  markers, recent commit subjects, and a short file tree to the endpoint you
+  select. It accepts loopback HTTP(S) endpoints and exactly one remote endpoint,
+  `https://api.openai.com`; it bypasses system proxies and refuses redirects.
+- **With the OpenAI endpoint, that evidence leaves your machine** and is subject
+  to OpenAI's data handling. Each run prints a `CLOUD:` line before the first
+  call. `OPENAI_API_KEY` is read from the environment or the git-ignored `.env`
+  and is sent only to `api.openai.com`, never to a local server.
+- A local model server may log or forward its requests. Use a server you trust
+  and configure it to keep data local. Repository and model text are
   untrusted; model suggestions never execute actions.
 
 Generated inventories and `domains.json` are ignored by Git, but are **not
@@ -20,8 +24,8 @@ remote formats. Review every artifact before sharing it. Publish only the
 fictional demo when you need a public example.
 
 Run the tools only on folders you intend to inspect. The line-counting walk does
-not implement `.gitignore` rules. Local processes and the model server remain
-inside your trust boundary.
+not implement `.gitignore` rules. Local processes and a local model server remain
+inside your trust boundary; OpenAI does not.
 
 ## Reporting a vulnerability
 

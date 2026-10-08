@@ -9,6 +9,7 @@ venv/
 /index.html
 /review.json
 /domains.json
+/goals.md
 /demo.html
 
 # Credentials and local tooling

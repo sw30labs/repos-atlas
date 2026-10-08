@@ -4,11 +4,17 @@
 survey.py measures. This reads. Two passes against an OpenAI-compatible endpoint
 served from your own machine - Inferencer, LM Studio, llama.cpp, vLLM, anything:
 
-  1. map    one call per project -> one-liner, kind, stage, what it does, keywords
-  2. reduce one call over all of them -> which projects overlap, and what to do
+  1. map    one call per project -> one-liner, kind, stage, what it does, keywords,
+            next step, distance to usable, blocker
+  2. fit    if goals.md exists: batches of one-liners -> how each serves your goals
+  3. reduce one call per group -> which projects overlap, and what to do
+  4. focus  one call over the top of the measured focus ranking -> why these, why now
 
 Writes review.json. atlas.py picks it up if it is there and ignores it if not.
-Nothing leaves the machine. Stdlib only.
+The endpoint is a server on this machine, or OpenAI when ATLAS_LLM_BASE (or
+--base) says https://api.openai.com/v1 - then the evidence below leaves the
+machine, and every run says so before the first call. Settings and
+OPENAI_API_KEY may live in a .env beside this file. Stdlib only.
 
   python3 review.py                     # all projects, cached, resumable
   python3 review.py --limit 5           # taste test
@@ -18,12 +24,33 @@ Nothing leaves the machine. Stdlib only.
 import argparse, hashlib, ipaddress, json, os, re, subprocess, sys, time, urllib.error, urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
+import atlas
 from atlas import DOMAIN_OF, DOMAINS   # the grouping the page already uses
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ.get("ATLAS_ROOT") or os.path.dirname(HERE)
-DEFAULT_BASE = os.environ.get("ATLAS_LLM_BASE", "http://127.0.0.1:54321/v1")
-DEFAULT_MODEL = os.environ.get("ATLAS_LLM_MODEL", "DeepSeek-V4.1")
+DEFAULT_BASE = "http://127.0.0.1:54321/v1"
+DEFAULT_MODEL = "DeepSeek-V4.1"
+
+# The only remote endpoints allowed, and the env var holding each one's key.
+# A list, not a pattern: "any https URL" would make a typo an upload.
+CLOUD = {"api.openai.com": "OPENAI_API_KEY"}
+
+def load_env(path):
+    """KEY=VALUE lines into os.environ, never overriding what is already set."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line: continue
+        k, v = line.removeprefix("export ").split("=", 1)
+        k, v = k.strip(), v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"": v = v[1:-1]
+        if k and k not in os.environ:
+            os.environ[k] = v
 
 # ---------------------------------------------------------------- transport
 
@@ -47,6 +74,36 @@ def local_url(url):
         netloc += f":{port}"
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
+def cloud_host(url):
+    """The CLOUD host this URL names exactly (https, default port, no extras), else None."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if (parts.scheme == "https" and parts.hostname in CLOUD and port in (None, 443)
+            and parts.username is None and parts.password is None
+            and not parts.query and not parts.fragment):
+        return parts.hostname
+    return None
+
+def endpoint_url(url):
+    """Loopback, or exactly one of the CLOUD hosts. Anything else is refused."""
+    host = cloud_host(url)
+    if host:
+        parts = urlsplit(url)
+        return urlunsplit(("https", host, parts.path, "", ""))
+    return local_url(url)
+
+def auth_headers(url):
+    host = cloud_host(url)
+    if not host:
+        return {}             # a local server never sees the cloud key
+    key = os.environ.get(CLOUD[host], "").strip()
+    if not key:
+        raise SystemExit(f"{CLOUD[host]} is not set (environment or .env) for {host}")
+    return {"Authorization": f"Bearer {key}"}
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.URLError("model server redirects are disabled to keep evidence local")
@@ -57,14 +114,17 @@ def local_open(request, timeout):
     return opener.open(request, timeout=timeout)
 
 def _post(url, payload, timeout):
+    target = endpoint_url(url)
     req = urllib.request.Request(
-        local_url(url), data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+        target, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **auth_headers(target)}, method="POST")
     with local_open(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 def _get(url, timeout=15):
-    with local_open(local_url(url), timeout=timeout) as r:
+    target = endpoint_url(url)
+    req = urllib.request.Request(target, headers=auth_headers(target))
+    with local_open(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 def resolve_model(base, want):
@@ -90,10 +150,15 @@ def chat(base, model, system, user, max_tokens, timeout, retries=2, deadline=Non
     `system` is byte-identical on every call and `user` carries the variable
     part, so a server doing prefix caching gets a long shared prefix to reuse.
     """
-    payload = {"model": model, "stream": False, "temperature": 0.2,
-               "max_tokens": max_tokens,
+    payload = {"model": model, "stream": False,
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": user}]}
+    if cloud_host(base):
+        # OpenAI's current models take max_completion_tokens, which also pays for
+        # hidden reasoning, and refuse any temperature but the default.
+        payload["max_completion_tokens"] = max(3 * max_tokens, 2000)
+    else:
+        payload.update(temperature=0.2, max_tokens=max_tokens)
     last = None
     for attempt in range(retries + 1):
         # A per-request timeout is not a budget: three retries of a 140s timeout is
@@ -249,7 +314,10 @@ given, keyed by its exact name:
     "stage": "sketch|working|shipped",
     "does":  ["concrete capability", "another", "at most three"],
     "keywords": ["5-8", "lowercase", "single", "words", "for", "matching"],
-    "confidence": "high|medium|low"
+    "confidence": "high|medium|low",
+    "next_step": "the ONE most useful next action, max 15 words, naming a real file or gap",
+    "distance": "days|weeks|months",
+    "blocker": "what stops it moving, max 12 words, or null"
   }
 }
 
@@ -261,6 +329,12 @@ Rules:
   "shipped" = tagged, documented, packaged or clearly in use.
 - confidence "low" if the evidence is thin. Say so rather than inventing.
 - Never repeat the project name inside one_liner.
+- next_step must follow from the evidence: a missing entry point, a TODO, an
+  unfinished file, a README promise the code does not keep. Never invent features.
+- distance: how far from usable by its owner. "days" = one sitting; "months" =
+  most of it is not written yet. For a shipped project, distance to its next release.
+- blocker: only when the evidence shows one (failing build, missing dependency,
+  open question in the README). Otherwise null. Do not guess.
 - Think briefly. These are short judgements, not essays.
 """
 
@@ -299,6 +373,42 @@ Rules:
   from the one-liners or it is not there.
 """
 
+FIT_SYSTEM = """You are given the goals one engineer wrote down, then a list of
+their projects, one per line as `name: one-liner [kind, stage]`.
+
+Say how much each project serves those goals. Return ONE JSON object and nothing
+else, keyed by exact project name:
+
+{
+  "<exact project name>": {"fit": 0, "goal": "the goal it serves, in 2-4 words, or null"}
+}
+
+fit: 3 = directly advances a goal; 2 = clearly supports one; 1 = adjacent, could
+help; 0 = unrelated to every goal. Most projects are 0 or 1. Judge only from the
+line given. Use names EXACTLY as given; never add one. Think briefly.
+
+GOALS:
+"""
+
+FOCUS_SYSTEM = """You are given the engineer's goals (possibly none) and a shortlist
+of their projects, already ranked by a formula over measured activity and a
+reading of each project. Each comes with its facts.
+
+Say which to work on next and why NOW. Return ONE JSON object and nothing else:
+
+{
+  "picks": ["exact-project-name", "at most three, best first"],
+  "summary": "two sentences on why these, for this week",
+  "why": {"<exact project name>": "one sentence: why now, citing its facts"}
+}
+
+Rules:
+- Use names EXACTLY as given. Never invent one. Give a "why" for every project listed.
+- Ground every sentence in the facts given: momentum, distance, blocker, goal.
+- You may disagree with the ranking; say so in the summary in one clause.
+- No pep talk, no adjectives like exciting or powerful. Think briefly.
+"""
+
 # ---------------------------------------------------------------- passes
 
 def load(path, default):
@@ -311,15 +421,118 @@ def save(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
 
+BRIEF_SCHEMA = "2"   # bump when BRIEF_SYSTEM asks for new fields, so old briefs re-read
+
 def fingerprint(rec, ev):
-    return hashlib.sha256((rec.get("last", "") + str(rec.get("commits", "")) +
+    return hashlib.sha256((BRIEF_SCHEMA + rec.get("last", "") + str(rec.get("commits", "")) +
                            ev).encode()).hexdigest()[:16]
+
+def sha(text):
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+def read_goals(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read().strip()
+    except OSError:
+        return ""
+    return text[:3000]
+
+def clean_fit(obj, names):
+    """{name: {"fit": 0-3, "goal": str|None}} for known names only."""
+    out = {}
+    for n in names:
+        v = obj.get(n) if isinstance(obj, dict) else None
+        if not isinstance(v, dict): continue
+        try: fit = int(v.get("fit"))
+        except (TypeError, ValueError): continue
+        goal = v.get("goal")
+        out[n] = {"fit": max(0, min(3, fit)),
+                  "goal": goal.strip()[:40] if isinstance(goal, str) and goal.strip()
+                          and goal.strip().lower() != "null" else None}
+    return out
+
+def clean_focus(obj, names):
+    """Keep only names that were on the shortlist."""
+    known = set(names)
+    whys = obj.get("why") if isinstance(obj.get("why"), dict) else {}
+    return {"picks": [p for p in (obj.get("picks") or []) if p in known][:3],
+            "summary": str(obj.get("summary") or "")[:400],
+            "why": {n: str(t)[:240] for n, t in whys.items() if n in known and t}}
+
+def fit_pass(a, model, goals, briefs, out, out_path, t0):
+    gs = sha(goals)
+    fit = out.get("fit") or {}
+    if fit.get("goals_sha") != gs or a.refresh:
+        fit = {"goals_sha": gs, "scores": {}}
+    scores = fit["scores"]
+    todo = [(n, b) for n, b in sorted(briefs.items()) if b.get("one_liner")
+            and scores.get(n, {}).get("brief") != b.get("fingerprint")]
+    print(f"\ngoal fit: {len(todo)} to score, {len(scores)} cached")
+    system = FIT_SYSTEM + goals + "\n"
+    for i in range(0, len(todo), 25):
+        if a.budget and time.time() - t0 > a.budget:
+            print("-- budget reached; run again to finish goal fit"); break
+        chunk = todo[i:i + 25]
+        names = [n for n, _ in chunk]
+        listing = "\n".join(f"{n}: {b['one_liner']} [{b.get('kind','?')}, {b.get('stage','?')}]"
+                            for n, b in chunk)
+        t = time.time()
+        try:
+            got = clean_fit(chat_json(a.base, model, system, listing, 120 + 40 * len(chunk),
+                                      a.timeout, lambda o: bool(clean_fit(o, names))), names)
+            for n, v in got.items():
+                v["brief"] = briefs[n].get("fingerprint")
+                scores[n] = v
+            print(f"  {i + 1:>4}-{i + len(chunk):<4} {time.time()-t:5.1f}s  {len(got)}/{len(chunk)} scored")
+        except Exception as e:
+            print(f"  {i + 1:>4}-{i + len(chunk):<4} {time.time()-t:5.1f}s  FAILED {e}")
+        fit["model"] = model
+        out["fit"] = fit
+        save(out_path, out)
+
+def focus_pass(a, model, goals, survey, out, out_path):
+    d = atlas.prepare(json.loads(json.dumps(survey)), out)
+    clusters = (out.get("synthesis") or {}).get("clusters") or []
+    top = atlas.focus_rank(d["repos"], clusters)[:5]
+    if not top:
+        print("\nfocus: nothing read and warm enough to rank yet"); return
+    names = [r["name"] for r, _, _ in top]
+    lines = []
+    for r, score, _ in top:
+        b, f = r["brief"], r["fit"]
+        lines.append(
+            f"{r['name']} (focus {score}/100): {b.get('one_liner')}\n"
+            f"  stage {b.get('stage','?')}, {b.get('distance','?')} to usable; "
+            f"next: {b.get('next_step') or '?'}; blocker: {b.get('blocker') or 'none'}\n"
+            f"  goal fit {f.get('fit','?')}/3 ({f.get('goal') or '-'}); "
+            f"{r['recent30']} commits in 30d, last {r['days']}d ago; "
+            f"{'uncommitted work; ' if r.get('dirty') else ''}"
+            f"{'never pushed; ' if r['is_git'] and not r['published'] else ''}"
+            f"{r['code_loc']} lines of code")
+    user = "GOALS:\n" + (goals or "(none written)") + "\n\nSHORTLIST:\n" + "\n".join(lines)
+    key = sha(user)
+    if (out.get("focus") or {}).get("key") == key and not a.refresh:
+        print("\nfocus: shortlist unchanged, cached"); return
+    t = time.time()
+    try:
+        got = clean_focus(chat_json(a.base, model, FOCUS_SYSTEM, user, 700, a.timeout,
+                                    lambda o: bool(clean_focus(o, names)["picks"])), names)
+        out["focus"] = dict(got, key=key, model=model,
+                            generated=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        save(out_path, out)
+        print(f"\nfocus: {time.time()-t:5.1f}s  picks {', '.join(got['picks'])}")
+    except Exception as e:
+        print(f"\nfocus: {time.time()-t:5.1f}s  FAILED {e}")
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base", default=DEFAULT_BASE, help="OpenAI-compatible endpoint")
-    ap.add_argument("--model", default=DEFAULT_MODEL, help="substring of the model id")
+    load_env(os.path.join(HERE, ".env"))
+    ap.add_argument("--base", default=os.environ.get("ATLAS_LLM_BASE") or DEFAULT_BASE,
+                    help="OpenAI-compatible endpoint: loopback, or https://api.openai.com/v1")
+    ap.add_argument("--model", default=os.environ.get("ATLAS_LLM_MODEL") or DEFAULT_MODEL,
+                    help="substring of the model id")
     ap.add_argument("--limit", type=int, help="only the first N projects needing work")
     ap.add_argument("--only", action="append", help="only this project (repeatable)")
     ap.add_argument("--refresh", action="store_true", help="ignore cached briefs")
@@ -335,11 +548,15 @@ def main():
     ap.add_argument("--no-synthesis", action="store_true", help="skip the overlap pass")
     ap.add_argument("--synthesis-only", action="store_true",
                     help="re-run just the cross-project pass over the briefs already read")
+    ap.add_argument("--goals", default=os.path.join(HERE, "goals.md"),
+                    help="what you are trying to get done; scores goal fit (default: goals.md)")
+    ap.add_argument("--no-focus", action="store_true",
+                    help="skip the goal-fit and focus passes")
     a = ap.parse_args()
     try:
-        a.base = local_url(a.base)
-    except ValueError as e:
-        ap.error(str(e))
+        a.base = endpoint_url(a.base)
+    except ValueError:
+        ap.error("model endpoint must be a loopback HTTP(S) URL, or https://api.openai.com/v1")
 
     survey = load(os.path.join(HERE, "survey.json"), None)
     if not survey:
@@ -354,7 +571,11 @@ def main():
     if a.only:
         want = {o.lower() for o in a.only}
         todo = [r for r in todo if r["name"].lower() in want]
+    where = cloud_host(a.base)
     print(f"model   {model}\nserver  {a.base}\nprojects {len(todo)}\n")
+    if where:
+        print(f"CLOUD: README excerpts, file trees and commit subjects of these projects "
+              f"go to {where}.\n       To stay on this machine, pass --base http://127.0.0.1:<port>/v1\n")
 
     queued, t0, done, failed = [], time.time(), 0, 0
     deadline = None
@@ -408,8 +629,9 @@ def main():
             failed += len(batch)
             print(f"{label:<44} {time.time()-t:5.1f}s  FAILED {e}")
         # write after every project: a 70-minute run must never lose work
-        out = {"briefs": briefs, "model": model, "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-               **({"synthesis": out["synthesis"]} if "synthesis" in out else {})}
+        out = {"briefs": briefs, "model": model, "endpoint": where or "local",
+               "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+               **{k: out[k] for k in ("synthesis", "fit", "focus") if k in out}}
         save(out_path, out)
 
     if not a.no_synthesis and briefs:
@@ -456,6 +678,15 @@ def main():
             syn["model"] = model
             out["synthesis"] = syn
             save(out_path, out)
+
+    if not a.no_focus and any(b.get("one_liner") for b in briefs.values()):
+        goals = read_goals(a.goals)
+        if goals:
+            fit_pass(a, model, goals, briefs, out, out_path, t0)
+        else:
+            print(f"\ngoal fit: skipped - write your goals to {a.goals} (see goals.example.md)")
+        if not (a.budget and time.time() - t0 > a.budget):
+            focus_pass(a, model, goals, survey, out, out_path)
 
     print(f"\n{done} read, {failed} failed, {time.time()-t0:.0f}s total -> {out_path}")
     print("now run: python3 atlas.py")

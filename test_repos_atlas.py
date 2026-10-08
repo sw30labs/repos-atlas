@@ -216,5 +216,121 @@ class TestDomains(unittest.TestCase):
                          "Meta & Tooling")
 
 
+def repo(name, days=5, commits=40, recent=6, loc=2000, files=10, origin="git@x:y", **kw):
+    last = (atlas.NOW - __import__("datetime").timedelta(days=days)).isoformat() if days is not None else ""
+    r = {"name": name, "is_git": True, "files": files, "bytes": 1, "loc": {"Python": loc},
+         "blurb": "", "commits": commits, "recent30": recent, "last": last,
+         "months": {"2026-09": commits}, "origin": origin, "dirty": 0}
+    r.update(kw)
+    return r
+
+def prepared(repos, review=None):
+    return atlas.prepare({"repos": repos}, review or {})["repos"]
+
+
+class TestFocus(unittest.TestCase):
+    def brief(self, **kw):
+        return dict({"one_liner": "does a thing", "stage": "working", "distance": "weeks"}, **kw)
+
+    def test_goal_fit_and_momentum_raise_the_score(self):
+        R = prepared([repo("hot"), repo("cold", days=200, recent=0), repo("fit"), repo("unfit")],
+                     {"briefs": {n: self.brief() for n in ("hot", "cold", "fit", "unfit")},
+                      "fit": {"scores": {"fit": {"fit": 3}, "unfit": {"fit": 0}}}})
+        s = {r["name"]: atlas.focus_score(r)[0] for r in R}
+        self.assertGreater(s["hot"], s["cold"])
+        self.assertGreater(s["fit"], s["hot"])
+        self.assertGreater(s["hot"], s["unfit"])
+        self.assertTrue(all(0 <= v <= 100 for v in s.values()))
+
+    def test_parts_explain_the_score(self):
+        r = prepared([repo("a", origin="", dirty=3)], {"briefs": {"a": self.brief()}})[0]
+        _, parts = atlas.focus_score(r)
+        self.assertIn("at risk", [k for k, _, _ in parts])
+        self.assertIn("no goals.md", [w for _, _, w in parts])
+
+    def test_rank_needs_a_brief_and_skips_let_go(self):
+        R = prepared([repo("read"), repo("unread"), repo("x-todelete")],
+                     {"briefs": {"read": self.brief(), "x-todelete": self.brief()}})
+        self.assertEqual([r["name"] for r, _, _ in atlas.focus_rank(R)], ["read"])
+
+
+class TestLetGo(unittest.TestCase):
+    def reasons(self, R, clusters=()):
+        return {r["name"]: (why, v) for r, why, v in atlas.let_go(R, clusters)}
+
+    def test_measured_reasons(self):
+        R = prepared([repo("g/STRIDE-Lite"), repo("g/STRIDE-Lite-todelete"),
+                      repo("g/empty", commits=0, recent=0, days=None),
+                      repo("g/tool"), repo("g/tool-v1", days=300, recent=0),
+                      repo("g/fresh"), repo("g/backups-api"), repo("g/parser-old2")])
+        got = self.reasons(R)
+        self.assertIn("g/STRIDE-Lite-todelete", got)
+        self.assertIn("g/parser-old2", got)
+        self.assertEqual(got["g/empty"][1], "delete")
+        self.assertTrue(any("older variant of g/tool" in t for _, t, _ in got["g/tool-v1"][0]))
+        for keep in ("g/STRIDE-Lite", "g/tool", "g/fresh", "g/backups-api"):
+            self.assertNotIn(keep, got)
+
+    def test_cold_alone_is_not_enough(self):
+        self.assertEqual(self.reasons(prepared([repo("old-school-parser", days=400)])), {})
+
+    def test_overlap_keeps_the_freshest(self):
+        R = prepared([repo("a", days=3), repo("b", days=100, recent=0)])
+        got = self.reasons(R, [{"call": "merge", "members": ["a", "b"]}])
+        self.assertNotIn("a", got)
+        self.assertEqual(got["b"][1], "merge into a")
+        self.assertEqual({src for _, _, src in got["b"][0]}, {"measured", "read"})
+
+
+class TestModelOutputCleaning(unittest.TestCase):
+    def test_fit_clamps_and_drops_unknown(self):
+        got = review.clean_fit({"a": {"fit": 9, "goal": "ship"}, "b": {"fit": "x"},
+                                "ghost": {"fit": 3}, "c": {"fit": "1", "goal": "null"}},
+                               ["a", "b", "c"])
+        self.assertEqual(got, {"a": {"fit": 3, "goal": "ship"}, "c": {"fit": 1, "goal": None}})
+
+    def test_focus_drops_invented_names(self):
+        got = review.clean_focus({"picks": ["ghost", "a"], "summary": "s",
+                                  "why": {"a": "now", "ghost": "no"}}, ["a", "b"])
+        self.assertEqual(got, {"picks": ["a"], "summary": "s", "why": {"a": "now"}})
+
+    def test_new_schema_invalidates_old_briefs(self):
+        with mock.patch.object(review, "BRIEF_SCHEMA", "1"):
+            old = review.fingerprint({"last": "x", "commits": 1}, "ev")
+        self.assertNotEqual(old, review.fingerprint({"last": "x", "commits": 1}, "ev"))
+
+
+class TestFocusRender(unittest.TestCase):
+    def page(self, review_data):
+        d = {"generated": "2026-10-08T12:00:00",
+             "repos": [repo("p/a"), repo("p/b"), repo("p/b-old", days=300, recent=0)]}
+        with mock.patch.object(atlas, "REVIEW", review_data):
+            atlas.prepare(d, review_data)
+            return "".join(atlas.build_rest(*atlas.build(d)))
+
+    def test_panels_only_with_a_review(self):
+        page = self.page({})
+        self.assertNotIn("Focus next", page)
+        self.assertNotIn("Let go", page)
+
+    def test_panels_render_and_ignore_invented_picks(self):
+        b = {"one_liner": "x", "stage": "working", "next_step": "write <main.py>"}
+        page = self.page({"briefs": {"p/a": b, "p/b": b},
+                          "focus": {"picks": ["ghost"], "summary": "INVENTED", "why": {"p/a": "because"}}})
+        self.assertIn("Focus next", page)
+        self.assertIn("write &lt;main.py&gt;", page)
+        self.assertIn("because", page)
+        self.assertNotIn("INVENTED", page)
+        self.assertIn("older variant of p/b", page)
+        self.assertNotIn("picked", page)
+
+    def test_real_picks_are_marked(self):
+        b = {"one_liner": "x", "stage": "working"}
+        page = self.page({"briefs": {"p/a": b, "p/b": b},
+                          "focus": {"picks": ["p/b"], "summary": "B first", "why": {}}})
+        self.assertIn("B first", page)
+        self.assertEqual(page.count('class="fc picked"'), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

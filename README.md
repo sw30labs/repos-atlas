@@ -101,18 +101,34 @@ python3 atlas.py
 ```
 
 Defaults are `http://127.0.0.1:54321/v1` and a model matching `DeepSeek-V4.1`.
-Override them with `--base` / `--model` or `ATLAS_LLM_BASE` / `ATLAS_LLM_MODEL`.
-Use the same settings on subsequent runs. Compatible local servers include
-llama.cpp, LM Studio, vLLM, and Inferencer.
+Override them with `--base` / `--model` or `ATLAS_LLM_BASE` / `ATLAS_LLM_MODEL`,
+set in the shell or in a `.env` beside the scripts (see `.env.example`; real
+environment variables win). Use the same settings on subsequent runs. Compatible
+local servers include llama.cpp, LM Studio, vLLM, and Inferencer.
+
+### OpenAI
+
+```bash
+cp .env.example .env    # sets https://api.openai.com/v1 and gpt-6-luna; add OPENAI_API_KEY
+python3 review.py --limit 5
+```
+
+With `ATLAS_LLM_BASE=https://api.openai.com/v1` the evidence described below
+**leaves your machine** for OpenAI, and each run prints a `CLOUD:` line saying so
+before the first call. `api.openai.com` is the only remote endpoint accepted; the
+key is sent only there, never to a local server. Pass `--base
+http://127.0.0.1:<port>/v1` to keep a single run local. The page names where the
+reading happened in the generated banner.
 
 The reviewer uses the folder recorded in `survey.json`, including when you ran
 `survey.py --root` elsewhere. It sends a bounded README excerpt, a short file
-tree, recent commit subjects, and summary metadata to your chosen local server.
-Only loopback HTTP(S) endpoints are accepted; proxies and redirects are disabled.
-Use a model server you trust to keep prompts local—its own logging and network
-behavior are outside this tool's control. See [SECURITY.md](SECURITY.md).
+tree, recent commit subjects, and summary metadata to your chosen endpoint.
+Only loopback HTTP(S) endpoints and `https://api.openai.com` are accepted;
+proxies and redirects are disabled. A local server's logging and network
+behavior, and OpenAI's data handling, are outside this tool's control. See [SECURITY.md](SECURITY.md).
 
-There are two passes: one brief per project, then overlap suggestions within
+Each brief also records the one next step, the distance to usable (days, weeks,
+months) and any blocker the evidence shows. Then come overlap suggestions within
 each group containing at least three briefs. Results are cached and written
 after each batch. Changed evidence triggers a new brief; `--refresh` forces it.
 `--budget` stops starting new work after the budget, while an in-flight request
@@ -120,6 +136,26 @@ can continue up to `--timeout`. There is no concurrency flag.
 
 Model statements are labelled **generated**, stored in `review.json`, and kept
 separate from measurements. Suggestions never change your repositories.
+
+### Focus next and Let go
+
+Copy `goals.example.md` to `goals.md` (ignored by Git) and write what you are
+trying to get done. `review.py` then scores each project 0-3 against those goals,
+and the page gains two panels at the top of the generated section:
+
+- **Focus next** ranks read projects by goal fit &times; momentum &times; stage
+  &times; distance to usable, nudged up for work that is uncommitted or never
+  pushed. Hover a score to see each factor. The model picks up to three from
+  the top five and says why now. Without `goals.md`, every project gets the same
+  neutral goal fit.
+- **Let go** lists archive candidates. Measured reasons: a name like
+  `-todelete` or `-old`, an empty repo, an older variant of a sibling that kept
+  moving, months without a commit. Read reasons: never past a sketch, outside
+  every goal, duplicated by another project. It warns when a candidate is the
+  only copy.
+
+Changing `goals.md` re-scores goal fit only; briefs stay cached. `--no-focus`
+skips both passes. See [ADR-006](docs/adr/ADR-006-focus-is-arithmetic.md).
 
 ## What it measures
 
@@ -169,6 +205,8 @@ folder. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow and
 - [Environment pruning by marker](docs/adr/ADR-003-prune-environments-by-marker.md)
 - [Model readings separate from measurements](docs/adr/ADR-004-reading-is-not-measuring.md)
 - [Local reasoning-server behavior](docs/adr/ADR-005-local-reasoning-server-contract.md)
+- [Focus is arithmetic over readings](docs/adr/ADR-006-focus-is-arithmetic.md)
+- [OpenAI as an opt-in endpoint](docs/adr/ADR-007-openai-endpoint.md)
 
 ## License
 

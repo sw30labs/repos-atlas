@@ -3,7 +3,7 @@
 
 Reads survey.json (see survey.py), writes index.html. No dependencies.
 """
-import argparse, json, os, sys, html, datetime, math
+import argparse, json, os, re, sys, html, datetime, math
 from collections import Counter, defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,9 +100,15 @@ def load(survey_path=None, include_review=True):
             REVIEW = {}
     except Exception:
         REVIEW = {}
-    briefs = REVIEW.get("briefs", {})
+    return prepare(d, REVIEW)
+
+def prepare(d, review):
+    """Derive the per-project fields every section uses. `review` may be {}."""
+    briefs = review.get("briefs", {})
+    fits = (review.get("fit") or {}).get("scores", {})
     for r in d["repos"]:
         r["brief"] = briefs.get(r["name"]) or {}
+        r["fit"]   = fits.get(r["name"]) or {}
         r["total_loc"] = sum(r["loc"].values())
         r["code_loc"]  = sum(v for k,v in r["loc"].items() if k != "Markdown")
         r["doc_loc"]   = r["loc"].get("Markdown", 0)
@@ -120,6 +126,108 @@ def load(survey_path=None, include_review=True):
         if r["days"] is not None and r["days"] > 90: flags.append(("critical", f"cold {r['days']}d"))
         r["flags"] = flags
     return d
+
+# ---------------------------------------------------------------- where to look next
+# The model answers questions (stage, distance, next step, fit with your goals);
+# this file does the arithmetic. A model asked to rank 170 projects reorders them
+# every run and cannot say why. A product of named factors can, on hover.
+
+STAGE_W    = {"working": 1.0, "sketch": 0.55, "shipped": 0.4}   # shipped = maintenance
+DISTANCE_W = {"days": 1.2, "weeks": 1.0, "months": 0.65}
+FIT_W      = {0: 0.1, 1: 0.45, 2: 0.75, 3: 1.0}
+FOCUS_MAX  = 1.2 * 1.15                                         # best closeness x risk
+
+def momentum(r):
+    """0.15-1.0: how warm the project is now, against its own history."""
+    if not r["is_git"] or r["days"] is None:
+        return 0.15
+    active = max(1, len(r.get("months") or {}))
+    avg = r.get("commits", 0) / active
+    trend = min(r["recent30"] / max(avg, 1), 2) / 2
+    recency = math.exp(-r["days"] / 60)
+    return 0.15 + 0.85 * (0.6 * recency + 0.4 * trend)
+
+def focus_score(r):
+    """(0-100, [(factor, value, why)]) - every factor shows up in the tooltip."""
+    b, fit = r["brief"], r["fit"].get("fit")
+    heat = momentum(r)
+    stage = STAGE_W.get(b.get("stage"), 0.7)
+    dist = DISTANCE_W.get(b.get("distance"), 1.0)
+    goal = FIT_W.get(fit, 0.5)
+    risk = 1.15 if (r.get("dirty") or (r["is_git"] and not r["published"])) else 1.0
+    tiny = 0.5 if r["code_loc"] < 80 else 1.0
+    parts = [("goal fit", goal, f"{fit}/3" if fit is not None else "no goals.md"),
+             ("momentum", heat, f'{r["recent30"]} commits/30d, last {r["days"]}d ago'
+                                if r["days"] is not None else "no history"),
+             ("stage", stage, b.get("stage") or "unread"),
+             ("distance", dist, b.get("distance") or "unknown")]
+    if risk > 1: parts.append(("at risk", risk, "uncommitted or never pushed"))
+    if tiny < 1: parts.append(("tiny", tiny, f'{r["code_loc"]} lines of code'))
+    raw = goal * heat * stage * dist * risk * tiny
+    return min(100, round(raw / FOCUS_MAX * 100)), parts
+
+# "old-school-parser" is a name; "parser-old" is a verdict. Ambiguous words only
+# count as a suffix, unambiguous ones anywhere.
+LETGO_NAME = re.compile(r"(^|[-_.])(to-?delete|delete-?me|deprecated|archived?)([-_.]|$)"
+                        r"|[-_.](old|copy|bak|backup|tmp|temp|scratch|unused)\d*$", re.I)
+
+def let_go(R, clusters=()):
+    """Projects that look done with you. Returns [(r, reasons, verdict)], most
+    certain first. reasons are (weight, text, source) with source measured|read.
+    A suggestion to a human, never an action - see ADR-004."""
+    by_parent = defaultdict(list)
+    for r in R:
+        by_parent[r["name"].rpartition("/")[0]].append(r)
+    overlap = {}
+    for c in clusters:
+        if c.get("call") not in ("archive-one", "merge"): continue
+        ms = [r for r in R if r["name"] in c["members"]]
+        if len(ms) < 2: continue
+        keep = min(ms, key=lambda r: (r["days"] if r["days"] is not None else 10**9,
+                                      -r["code_loc"]))
+        for r in ms:
+            if r is not keep:
+                overlap[r["name"]] = (keep["name"], c["call"])
+    out = []
+    for r in R:
+        base, days, b = r["name"].rpartition("/")[2], r["days"], r["brief"]
+        why, verdict = [], "archive"
+        if LETGO_NAME.search(base) or base.lower() == "test":
+            why.append((3, f'name says so ("{base}")', "measured"))
+        if r["files"] == 0 or (r["is_git"] and not r.get("commits")):
+            why.append((3, "empty: no commits or no files", "measured")); verdict = "delete"
+        for sib in by_parent[r["name"].rpartition("/")[0]]:
+            sb = sib["name"].rpartition("/")[2]
+            if sib is r or sib["days"] is None or days is None: continue
+            related = sb.startswith(base + "-") or sb.startswith(base + "_") or \
+                      base.startswith(sb + "-") or base.startswith(sb + "_")
+            if related and days > 90 and days - sib["days"] > 60:
+                why.append((2, f'older variant of {sib["name"]} ({days}d vs {sib["days"]}d)',
+                            "measured"))
+                break
+        if days is not None and days > 90:
+            why.append((1, f"no commits for {days} days", "measured"))
+        if b.get("stage") == "sketch" and (days is None or days > 120):
+            why.append((2, "never got past a sketch", "read"))
+        if r["fit"].get("fit") == 0 and (days is None or days > 60):
+            why.append((2, "outside every goal in goals.md", "read"))
+        if r["name"] in overlap:
+            keep, call = overlap[r["name"]]
+            why.append((2, f"does the same work as {keep}", "read"))
+            if call == "merge" and verdict != "delete": verdict = f"merge into {keep}"
+        weight = sum(w for w, _, _ in why)
+        if any(w == 3 for w, _, _ in why) or weight >= 3:
+            out.append((weight, r, why, verdict))
+    out.sort(key=lambda t: (-t[0], -(t[1]["days"] or 0)))
+    return [(r, why, verdict) for _, r, why, verdict in out]
+
+def focus_rank(R, clusters=()):
+    """Read, warm-enough projects not already on the let-go list, best first."""
+    gone = {r["name"] for r, _, _ in let_go(R, clusters)}
+    ranked = [(focus_score(r), r) for r in R
+              if r["brief"].get("one_liner") and r["name"] not in gone]
+    ranked.sort(key=lambda t: (-t[0][0], t[1]["name"]))
+    return [(r, score, parts) for (score, parts), r in ranked]
 
 CSS = r"""
 :root{
@@ -259,6 +367,30 @@ td.br{max-width:132px;overflow:hidden;text-overflow:ellipsis}
 .notes{margin:16px 0 0;padding-left:20px;color:var(--ink-2);font-size:12.5px}
 .notes li{margin-bottom:6px}
 
+/* focus next / let go - generated, so they sit in the dashed section */
+.focus{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:9px;margin-bottom:8px}
+.fc{background:var(--surface-1);border:1px dashed var(--line);border-radius:10px;padding:13px 15px}
+.fh{display:flex;align-items:center;gap:9px}
+.fc.picked{border:1.5px solid var(--accent)}
+.pk{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--accent);white-space:nowrap}
+.rk{font-size:11px;font-weight:700;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fn{font-weight:640;font-size:13px;overflow-wrap:anywhere;flex:1}
+.sc{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:660;font-variant-numeric:tabular-nums;cursor:help}
+.bar{width:54px;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;display:inline-block}
+.bar i{display:block;height:100%;background:var(--accent)}
+.ol1{font-style:italic;color:var(--ink-2);font-size:12px;margin:6px 0 8px}
+.nx,.bl,.wy{font-size:12.5px;margin-top:5px;line-height:1.45}
+.nx b,.bl b{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:5px}
+.bl{color:var(--serious)} .bl b{color:inherit}
+.wy{color:var(--ink-3);font-size:12px}
+.arow.lg{align-items:flex-start}
+.vd{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;
+  padding:2.5px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);flex:0 0 auto}
+.rs{display:flex;gap:5px;flex-wrap:wrap}
+.rsn{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2)}
+.rsn.read{border-style:dashed}
+.rsn.warn{color:var(--serious);border-color:currentColor}
+
 /* tooltip */
 #tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;background:var(--surface-1);
   color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:11.5px;
@@ -272,7 +404,7 @@ td.br{max-width:132px;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:640px){
   .tile.big{grid-column:span 1}
   h1{font-size:23px}
-  .arow{flex-wrap:wrap} .arow .nm{min-width:0} .arow .rt{margin-left:0;padding-left:28px}
+  .arow{flex-wrap:wrap} .arow .nm{min-width:0} .focus{grid-template-columns:1fr} .arow .rt{margin-left:0;padding-left:28px}
   .mlab{font-size:8px}
 }
 """
@@ -481,6 +613,75 @@ CALL = {"keep-separate": ("good", "&#10003;", "keep separate"),
         "archive-one":   ("critical", "&#9632;", "archive one")}
 ICON = {"warning":"&#9679;","serious":"&#9650;","critical":"&#9632;","good":"&#10003;"}
 
+def _fmt_parts(parts):
+    return "".join(f'<br><span class=r>{esc(k)} &times;{v:.2f} &mdash; {esc(w)}</span>'
+                   for k, v, w in parts)
+
+def focus_html(R, clusters, top=5):
+    ranked = focus_rank(R, clusters)[:top]
+    o = ['<h3>Focus next</h3>',
+         '<p class="sub">Ranked by goal fit &times; momentum &times; stage &times; distance to '
+         'usable. The arithmetic is measured; stage, distance, fit and the next step are the '
+         'model&rsquo;s reading. Hover a score for its factors.</p>']
+    if not ranked:
+        return o + ['<div class="card">Nothing read yet is warm enough to rank.</div>']
+    focus = REVIEW.get("focus") or {}
+    whys = focus.get("why") or {}
+    picks = [p for p in (focus.get("picks") or []) if p in {r["name"] for r, _, _ in ranked}]
+    if focus.get("summary") and picks:
+        o.append(f'<div class="genbar"><b>why these</b><span class="w">{esc(focus["summary"])}</span></div>')
+    o.append('<div class="focus">')
+    for i, (r, score, parts) in enumerate(ranked, 1):
+        b, fit = r["brief"], r["fit"]
+        tip = esc(f'<b>{esc(r["name"])}</b><span class=r>focus {score}/100</span>' + _fmt_parts(parts))
+        chips = [b.get("stage"), b.get("distance") and f'{b["distance"]} to usable',
+                 fit.get("goal") and f'goal: {fit["goal"]}',
+                 f'last {r["days"]}d ago' if r["days"] is not None else "no commits",
+                 r["recent30"] and f'{r["recent30"]} commit{"s" if r["recent30"] != 1 else ""}/30d']
+        pick = (f'<span class="pk">model&rsquo;s pick {picks.index(r["name"]) + 1}</span>'
+                if r["name"] in picks else "")
+        o.append(f'<div class="fc{" picked" if pick else ""}"><div class="fh"><span class="rk">{i}</span>'
+                 f'<span class="fn">{esc(r["name"])}</span>{pick}'
+                 f'<span class="sc" data-tip="{tip}"><span class="bar"><i style="width:{score}%"></i></span>'
+                 f'{score}</span></div>'
+                 f'<div class="ol1">{esc(b.get("one_liner"))}</div>')
+        if b.get("next_step"):
+            o.append(f'<div class="nx"><b>next</b> {esc(b["next_step"])}</div>')
+        if b.get("blocker"):
+            o.append(f'<div class="bl"><b>blocked by</b> {esc(b["blocker"])}</div>')
+        if whys.get(r["name"]):
+            o.append(f'<div class="wy">{esc(whys[r["name"]])}</div>')
+        o.append('<div class="chips">' + "".join(
+            f'<span class="chip">{esc(c)}</span>' for c in chips if c) + '</div></div>')
+    o.append('</div>')
+    return o
+
+def letgo_html(R, clusters, top=15):
+    gone = let_go(R, clusters)
+    o = ['<h3>Let go</h3>']
+    if not gone:
+        return o + ['<div class="card">Nothing looks finished with you.</div>']
+    loc = sum(r["total_loc"] for r, _, _ in gone)
+    o.append(f'<p class="sub">{len(gone)} project{"s" if len(gone) != 1 else ""} '
+             f'({human(loc)} lines) look done with you. Suggestions only &mdash; nothing here '
+             f'touches a repo. Solid reasons are measured; dashed ones are the model&rsquo;s reading.</p>'
+             '<div class="alist">')
+    for r, why, verdict in gone[:top]:
+        warn = []
+        if r["is_git"] and not r["published"] and r["code_loc"]:
+            warn.append("only copy &mdash; push or back up first")
+        if r.get("dirty"):
+            warn.append(f'{r["dirty"]} uncommitted')
+        o.append(f'<div class="arow lg"><span class="vd">{esc(verdict)}</span>'
+                 f'<span class="nm">{esc(r["name"])}</span><span class="rs">'
+                 + "".join(f'<span class="rsn {src}">{esc(t)}</span>' for _, t, src in why)
+                 + "".join(f'<span class="rsn warn">{w}</span>' for w in warn)
+                 + f'</span><span class="rt">{human(r["total_loc"])} lines</span></div>')
+    o.append('</div>')
+    if len(gone) > top:
+        o.append(f'<div class="meta">&hellip; and {len(gone) - top} more.</div>')
+    return o
+
 def build_rest(o, R, git, months, commits):
     A = o.append
     # ---- language mix
@@ -536,11 +737,13 @@ def build_rest(o, R, git, months, commits):
     briefs = REVIEW.get("briefs", {})
     read = [b for b in briefs.values() if b.get("one_liner")]
     if read:
-        A('<h2>Read by a local model</h2>')
+        A('<h2>Read by a model</h2>')
         model = (REVIEW.get("model") or "").split("/")[-1]
         A(f'<div class="genbar"><b>generated</b><span class="w">'
           f'{esc(model)} &middot; {esc((REVIEW.get("generated") or "")[:10])} &middot; '
-          f'{len(read)} of {len(R)} projects read locally. Everything in this section is a '
+          f'{len(read)} of {len(R)} projects read '
+          f'{"locally" if REVIEW.get("endpoint", "local") == "local" else "by " + esc(REVIEW["endpoint"])}. '
+          f'Everything in this section is a '
           f'model&rsquo;s reading of your code, not a measurement of it. Second opinion, not record.'
           f'</span></div>')
         # review.py already filters invented members, but the promise that a name
@@ -552,6 +755,8 @@ def build_rest(o, R, git, months, commits):
             c = dict(c, members=[m for m in (c.get("members") or []) if m in real])
             if len(c["members"]) >= 2:
                 clusters.append(c)
+        A("".join(focus_html(R, clusters)))
+        A("".join(letgo_html(R, clusters)))
         if clusters:
             A('<h3>Where projects overlap</h3>')
             for c in clusters:

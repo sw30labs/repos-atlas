@@ -71,6 +71,46 @@ class TestLocalTransport(unittest.TestCase):
                         review._get(url)
             opened.assert_not_called()
 
+    def test_openai_is_the_only_remote_endpoint(self):
+        self.assertEqual(review.endpoint_url('https://api.openai.com/v1'), 'https://api.openai.com/v1')
+        self.assertEqual(review.endpoint_url('https://api.openai.com:443/v1'), 'https://api.openai.com/v1')
+        for url in ('http://api.openai.com/v1', 'https://api.openai.com.evil.example/v1',
+                    'https://key@api.openai.com/v1', 'https://api.openai.com/v1?x=1',
+                    'https://api.openai.com:8443/v1', 'https://example.com/v1'):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                review.endpoint_url(url)
+
+    def test_key_goes_only_to_openai(self):
+        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-fictional'}):
+            self.assertEqual(review.auth_headers('http://127.0.0.1:8000/v1'), {})
+            self.assertEqual(review.auth_headers('https://api.openai.com/v1'),
+                             {'Authorization': 'Bearer sk-fictional'})
+        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': ''}), self.assertRaises(SystemExit):
+            review.auth_headers('https://api.openai.com/v1')
+
+    def test_payload_matches_the_endpoint(self):
+        reply = {'choices': [{'message': {'content': 'ok'}}]}
+        with mock.patch.object(review, '_post', return_value=reply) as post:
+            review.chat('https://api.openai.com/v1', 'm', 's', 'u', 500, 5)
+            review.chat('http://127.0.0.1:8000/v1', 'm', 's', 'u', 500, 5)
+        cloud, local = (c.args[1] for c in post.call_args_list)
+        self.assertEqual(cloud['max_completion_tokens'], 2000)
+        self.assertNotIn('temperature', cloud)
+        self.assertNotIn('max_tokens', cloud)
+        self.assertEqual((local['max_tokens'], local['temperature']), (500, 0.2))
+
+    def test_env_file_never_overrides_the_environment(self):
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.dict(os.environ, {'ATLAS_LLM_MODEL': 'from-shell'}, clear=False):
+            os.environ.pop('ATLAS_TEST_VAR', None)
+            p = Path(td, '.env')
+            p.write_text('# c\nexport ATLAS_TEST_VAR="quoted"\nATLAS_LLM_MODEL=from-file\njunk\n',
+                         encoding='utf-8')
+            review.load_env(str(p))
+            self.assertEqual(os.environ['ATLAS_TEST_VAR'], 'quoted')
+            self.assertEqual(os.environ['ATLAS_LLM_MODEL'], 'from-shell')
+            os.environ.pop('ATLAS_TEST_VAR')
+
     def test_system_proxies_are_disabled(self):
         with mock.patch.dict(os.environ, {'HTTP_PROXY': 'http://example.com:8080'}), \
                 mock.patch.object(review.urllib.request, 'build_opener') as build:
@@ -108,6 +148,7 @@ class TestPrivacy(unittest.TestCase):
         data = {'root': '/example/projects', 'repos': [{'name': 'sample'}]}
         with mock.patch.object(review, 'load', side_effect=[data, {}]), \
                 mock.patch.object(review, 'resolve_model', return_value='demo'), \
+                mock.patch.object(review, 'load_env'), \
                 mock.patch.object(review, 'evidence', return_value='') as evidence, \
                 mock.patch('sys.argv', ['review.py', '--no-synthesis']), \
                 contextlib.redirect_stdout(io.StringIO()):
